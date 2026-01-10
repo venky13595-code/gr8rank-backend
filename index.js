@@ -34,10 +34,10 @@ app.get('/api/auth/verify-mobile/:mobile', async (req, res) => {
   }
 });
 
-// --- Admin: Get All Employees (For Filters) ---
+// --- Admin: Get Distinct Employees ---
 app.get('/api/admin/employees', async (req, res) => {
   try {
-    const result = await pool.query('SELECT id, name, mobile_number FROM mar.employees ORDER BY name ASC');
+    const result = await pool.query('SELECT DISTINCT name, mobile_number FROM mar.employees ORDER BY name ASC');
     res.json({ status: "success", data: result.rows });
   } catch (err) {
     res.status(500).json({ status: "error", message: err.message });
@@ -64,6 +64,7 @@ app.post('/api/attendance', async (req, res) => {
 
 app.get('/api/admin/attendance', async (req, res) => {
   try {
+    // Sorting by log_dttm DESC (Latest first)
     const result = await pool.query('SELECT * FROM attendance ORDER BY log_dttm DESC');
     res.json({ status: "success", data: result.rows });
   } catch (err) {
@@ -84,6 +85,7 @@ app.post('/api/leaves', async (req, res) => {
 
 app.get('/api/admin/leaves', async (req, res) => {
   try {
+    // Sorting by applied_at DESC (Latest first)
     const result = await pool.query('SELECT * FROM leave_plan ORDER BY applied_at DESC');
     res.json({ status: "success", data: result.rows });
   } catch (err) {
