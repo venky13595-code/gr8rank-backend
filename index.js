@@ -62,10 +62,18 @@ app.post('/api/attendance', async (req, res) => {
   }
 });
 
+// Admin Attendance with Filtering
 app.get('/api/admin/attendance', async (req, res) => {
+  const { name } = req.query;
   try {
-    // Sorting by log_dttm DESC (Latest first)
-    const result = await pool.query('SELECT * FROM attendance ORDER BY log_dttm DESC');
+    let query = 'SELECT * FROM attendance';
+    const values = [];
+    if (name && name !== 'All Employees') {
+      query += ' WHERE name = $1';
+      values.push(name);
+    }
+    query += ' ORDER BY log_dttm DESC';
+    const result = await pool.query(query, values);
     res.json({ status: "success", data: result.rows });
   } catch (err) {
     res.status(500).json({ status: "error", message: err.message });
@@ -83,10 +91,18 @@ app.post('/api/leaves', async (req, res) => {
   }
 });
 
+// Admin Leaves with Filtering
 app.get('/api/admin/leaves', async (req, res) => {
+  const { name } = req.query;
   try {
-    // Sorting by applied_at DESC (Latest first)
-    const result = await pool.query('SELECT * FROM leave_plan ORDER BY applied_at DESC');
+    let query = 'SELECT * FROM leave_plan';
+    const values = [];
+    if (name && name !== 'All Employees') {
+      query += ' WHERE name = $1';
+      values.push(name);
+    }
+    query += ' ORDER BY applied_at DESC';
+    const result = await pool.query(query, values);
     res.json({ status: "success", data: result.rows });
   } catch (err) {
     res.status(500).json({ status: "error", message: err.message });
