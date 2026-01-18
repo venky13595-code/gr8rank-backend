@@ -2,6 +2,7 @@ const express = require('express');
 const { Pool } = require('pg');
 const bodyParser = require('body-parser');
 const cors = require('cors');
+const bcrypt = require('bcryptjs');
 
 const app = express();
 app.use(cors());
@@ -18,6 +19,18 @@ const pool = new Pool({
   idleTimeoutMillis: 30000,
   connectionTimeoutMillis: 2000
 });
+
+// Create emp_credentials table if it doesn't exist
+pool.query(`
+  CREATE TABLE IF NOT EXISTS mar.emp_credentials (
+    id SERIAL PRIMARY KEY,
+    emp_id INTEGER UNIQUE NOT NULL,
+    password_hash TEXT NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+  )
+`).then(() => console.log('✅ emp_credentials table ready'))
+  .catch(err => console.error('❌ Table creation error:', err.message));
 
 // ==========================================
 // ADMIN APIs
@@ -102,13 +115,13 @@ app.get('/api/admin/leaves', async (req, res) => {
 // FIXED: Update leave status - only updates status column
 app.post('/api/admin/leaves/update', async (req, res) => {
   const { id, status } = req.body;
-  
+
   console.log('Received update request:', { id, status }); // Debug log
-  
+
   if (!id || !status) {
-    return res.status(400).json({ 
-      status: "error", 
-      message: "Missing required fields: id and status" 
+    return res.status(400).json({
+      status: "error",
+      message: "Missing required fields: id and status"
     });
   }
 
@@ -119,16 +132,16 @@ app.post('/api/admin/leaves/update', async (req, res) => {
     );
 
     if (result.rows.length === 0) {
-      return res.status(404).json({ 
-        status: "error", 
-        message: `Leave with id ${id} not found` 
+      return res.status(404).json({
+        status: "error",
+        message: `Leave with id ${id} not found`
       });
     }
 
     console.log('Updated successfully:', result.rows[0]); // Debug log
-    
-    res.json({ 
-      status: "success", 
+
+    res.json({
+      status: "success",
       message: `Leave ${status.toLowerCase()} successfully`,
       data: result.rows[0]
     });
@@ -227,8 +240,8 @@ app.post('/api/attendance', async (req, res) => {
   const { emp_id, name, mobile_number, log_location, log_dttm } = req.body;
   try {
     const check = await pool.query(
-      `SELECT id FROM mar.attendance 
-       WHERE emp_id = $1 AND log_dttm >= CURRENT_DATE AND log_dttm < CURRENT_DATE + INTERVAL '1 day' 
+      `SELECT id FROM mar.attendance
+       WHERE emp_id = $1 AND log_dttm >= CURRENT_DATE AND log_dttm < CURRENT_DATE + INTERVAL '1 day'
        LIMIT 1`,
       [emp_id]
     );
@@ -283,12 +296,12 @@ app.post('/api/leaves', async (req, res) => {
   const { emp_id, name, mobile_number, date_from, date_to, days, leave_type } = req.body;
   try {
     const result = await pool.query(
-      `INSERT INTO mar.leave_plan (emp_id, name, mobile_number, date_from, date_to, days, leave_type, status) 
+      `INSERT INTO mar.leave_plan (emp_id, name, mobile_number, date_from, date_to, days, leave_type, status)
        VALUES ($1,$2,$3,$4,$5,$6,$7,'pending') RETURNING *`,
       [emp_id, name, mobile_number, date_from, date_to, days || 1, leave_type]
     );
-    res.json({ 
-      status: "success", 
+    res.json({
+      status: "success",
       message: "Leave applied successfully",
       data: result.rows[0]
     });
@@ -312,6 +325,80 @@ app.get('/api/leaves/:emp_id', async (req, res) => {
 });
 
 // ==========================================
+// PAYSLIP APIs
+// ==========================================
+
+// Get payslips by mobile_number, optional month_year filter
+// Table assumed: mar.emp_payslip(emp_id, payslip_url, month_year, created_at, ...)
+app.get('/api/payslip', async (req, res) => {
+  const { mobile_number, month_year } = req.query;
+
+  if (!mobile_number) {
+    return res.status(400).json({
+      status: "error",
+      message: "mobile_number is required"
+    });
+  }
+
+  try {
+    // 1. Get emp_id from employees using mobile_number
+    const empResult = await pool.query(
+      `SELECT emp_id FROM mar.employees WHERE mobile_number = $1 LIMIT 1`,
+      [mobile_number]
+    );
+
+    if (empResult.rows.length === 0) {
+      return res.status(404).json({
+        status: "error",
+        message: "Employee not found for given mobile_number"
+      });
+    }
+
+    const emp_id = empResult.rows[0].emp_id;
+
+    // 2. Build payslip query with optional month_year filter
+    let query = `
+      SELECT payslip_url, month_year
+      FROM mar.emp_payslip
+      WHERE emp_id = $1
+    `;
+    const values = [emp_id];
+    let idx = 2;
+
+    if (month_year) {
+      // CASE A: month_year stored as TEXT/VARCHAR like '2025-01'
+      query += ` AND month_year = $${idx++}`;
+      values.push(month_year);
+
+      // CASE B (if month_year is DATE like '2025-01-01'), comment above and use below:
+      // query += ` AND to_char(month_year, 'YYYY-MM') = $${idx++}`;
+      // values.push(month_year);
+    }
+
+    query += ` ORDER BY month_year DESC`;
+
+    const payslipResult = await pool.query(query, values);
+
+    if (payslipResult.rows.length === 0) {
+      return res.json({
+        status: "success",
+        message: month_year
+          ? "No payslip found for given month_year"
+          : "No payslips found for this employee",
+        data: []
+      });
+    }
+
+    res.json({
+      status: "success",
+      data: payslipResult.rows   // [{ payslip_url, month_year }, ...]
+    });
+  } catch (err) {
+    res.status(500).json({ status: "error", message: err.message });
+  }
+});
+
+// ==========================================
 // SERVER START
 // ==========================================
 
@@ -323,6 +410,7 @@ app.listen(PORT, () => {
   console.log(`   POST /api/admin/leaves/update`);
   console.log(`   POST /api/admin/leaves/approve`);
   console.log(`   POST /api/admin/leaves/reject`);
+  console.log(`   GET  /api/payslip`);
 });
 
 process.on('SIGINT', async () => {
